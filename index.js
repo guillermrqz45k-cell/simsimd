@@ -442,7 +442,7 @@ app.get('/', async (req, res) => {
   const status = isReady
     ? `✅ <b>Conectado</b> ${readyInfo ? 'como ' + readyInfo : ''}`
     : (qrString ? '⏳ Esperando que escanees el QR' : '🔄 Conectando…');
-  res.send(page('SIMsimd', `<h1>🤖 SIMsimd</h1><div class="card">${status}</div><p><a href="/admin">🔒 Panel privado (encendido/apagado y números)</a></p><p><a href="/qr">📷 Ver código QR para vincular</a></p><p><a href="/config">⚙️ Configuración</a></p><p><small>Bot de WhatsApp para tu grupo: bienvenida, moderación, sorteos y difusión a tus números. Corre en tu celular con Termux, gratis.</small></p>`));
+  res.send(page('SIMsimd', `<h1>🤖 SIMsimd</h1><div class="card">${status}</div><p><a href="/admin">🔒 Panel web privado — usar el bot desde la web (encendido/apagado, difusión, números, sorteo)</a></p><p><a href="/qr">📷 Ver código QR para vincular</a></p><p><a href="/config">⚙️ Configuración</a></p><p><small>Bot de WhatsApp para tu grupo: bienvenida, moderación, sorteos y difusión a tus números. Corre en tu celular con Termux, gratis. Abre el panel web desde el navegador del celular.</small></p>`));
 });
 
 app.get('/qr', async (req, res) => {
@@ -511,6 +511,7 @@ app.post('/config', (req, res) => {
 
 // ---- Panel privado /admin: solo tú, con tu clave ----
 // Encendido/apagado + recuadro para poner el número al que llega la difusión.
+// Es la web completa para usar el bot: estado, difusión, números y sorteo.
 function adminPage(key, msg = '') {
   const nums = config.allowedNumbers || [];
   const rows = nums.length
@@ -520,23 +521,27 @@ function adminPage(key, msg = '') {
   const toggleBtn = config.botEnabled
     ? `<button type="submit" style="background:#c0392b;width:100%;font-size:18px">⏻ APAGAR EL BOT</button>`
     : `<button type="submit" style="width:100%;font-size:18px">⏻ ENCENDER EL BOT</button>`;
-  const conn = isReady ? `✅ Conectado ${readyInfo ? 'como ' + readyInfo : ''}` : (qrString ? '⏳ Esperando que escanees el QR' : '🔄 Conectando…');
-  return page('SIMsimd — Panel privado', `<h1>🤖 SIMsimd — Panel privado</h1>
+  const conn = isReady ? `✅ Conectado a WhatsApp ${readyInfo ? 'como ' + readyInfo : ''}` : (qrString ? '⏳ Esperando que escanees el QR' : '🔄 Conectando…');
+  const raffle = sorteo.activo
+    ? `<p><b>🎁 Sorteo abierto:</b> ${escapeHtml(sorteo.premio || '')}</p><p>${sorteo.participantes.length} participante(s). Para cerrarlo y anunciar al ganador, escribe <b>!cerrar</b> en el grupo (solo admin).</p>`
+    : `<p><small>No hay sorteo abierto. Para abrir uno, escribe <b>!sorteo &lt;premio&gt;</b> en el grupo (solo admin).</small></p>`;
+  return page('SIMsimd — Panel web', `<h1>🤖 SIMsimd — Panel web</h1>
   ${msg ? `<div class="card">${msg}</div>` : ''}
   <div class="card"><p><b>Estado del bot: ${state}</b></p><p>${conn}</p>
   <form method="POST" action="/admin/toggle"><input type="hidden" name="key" value="${key}">${toggleBtn}</form>
   <p><small>Cuando está apagado el bot no responde ni manda nada. Lo vuelves a encender aquí mismo.</small></p></div>
-  <div class="card"><h3>📱 Números que reciben la difusión</h3>${rows}
-  <form method="POST" action="/admin/add-number" style="margin-top:14px"><input type="hidden" name="key" value="${key}">
-  <label>Número (con código de país, ej. 573001234567)</label><input name="number" placeholder="573001234567" inputmode="numeric">
-  <button type="submit">➕ Agregar número</button></form>
-  <p><small>Solo a estos números les llega lo que mandes con !difundir. El bot no manda nada a ningún otro número.</small></p></div>
-  <div class="card"><h3>📣 Enviar difusión desde aquí</h3>
+  <div class="card"><h3>📣 Enviar difusión desde la web</h3>
   <form method="POST" action="/admin/difundir"><input type="hidden" name="key" value="${key}">
   <label>Mensaje</label><textarea name="message" rows="3" placeholder="Escribe el mensaje que quieres mandar"></textarea>
   <label>¿A cuántos números? (de 1 a 100.000)</label><input name="quantity" type="number" min="1" max="100000" placeholder="Ej. 50 — vacío = a todos los de la lista">
   <button type="submit">📣 Enviar difusión</button></form>
   <p><small>El mensaje les llega a los primeros números de tu lista, hasta la cantidad que pongas (máximo 100.000). Si la lista tiene menos, les llega a todos los que hay.</small></p></div>
+  <div class="card"><h3>📱 Números que reciben la difusión</h3>${rows}
+  <form method="POST" action="/admin/add-number" style="margin-top:14px"><input type="hidden" name="key" value="${key}">
+  <label>Número (con código de país, ej. 573001234567)</label><input name="number" placeholder="573001234567" inputmode="numeric">
+  <button type="submit">➕ Agregar número</button></form>
+  <p><small>Solo a estos números les llega lo que mandes con !difundir. El bot no manda nada a ningún otro número.</small></p></div>
+  <div class="card"><h3>🎁 Sorteo</h3>${raffle}</div>
   <p><a href="/config?key=${encodeURIComponent(key)}">⚙️ Más ajustes (bienvenida, mensajes, respuestas)</a></p>
   <p><a href="/qr">📷 Ver código QR para vincular</a></p>
   <p><a href="/">← Volver</a></p>`);
