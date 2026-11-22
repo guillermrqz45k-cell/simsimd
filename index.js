@@ -542,6 +542,7 @@ function adminPage(key, msg = '') {
   <button type="submit">➕ Agregar número</button></form>
   <p><small>Solo a estos números les llega lo que mandes con !difundir. El bot no manda nada a ningún otro número.</small></p></div>
   <div class="card"><h3>🎁 Sorteo</h3>${raffle}</div>
+  <p><a href="/enviar?key=${encodeURIComponent(key)}">📣 Página sencilla — solo mandar al bot</a></p>
   <p><a href="/config?key=${encodeURIComponent(key)}">⚙️ Más ajustes (bienvenida, mensajes, respuestas)</a></p>
   <p><a href="/qr">📷 Ver código QR para vincular</a></p>
   <p><a href="/">← Volver</a></p>`);
@@ -604,6 +605,45 @@ app.post('/admin/difundir', async (req, res) => {
       : `✅ Difusión enviada a ${r.sent} número(s).`));
   } catch (e) {
     res.send(adminPage(key, '❌ No se pudo enviar la difusión: ' + e.message));
+  }
+});
+
+// ---- Página sencilla /enviar: solo mandar al bot y ya ----
+// Una sola cosa: escribes el mensaje, pones a cuántos (opcional) y lo mandas.
+function enviarPage(key, msg = '') {
+  return page('SIMsimd — Enviar', `<h1>📣 Mandar al bot</h1>
+  ${msg ? `<div class="card">${msg}</div>` : ''}
+  <div class="card">
+  <form method="POST" action="/enviar"><input type="hidden" name="key" value="${key}">
+  <label>Mensaje</label><textarea name="message" rows="4" placeholder="Escribe el mensaje"></textarea>
+  <label>¿A cuántos números? (opcional, de 1 a 100.000 — vacío = a todos)</label><input name="quantity" type="number" min="1" max="100000" placeholder="Ej. 50">
+  <button type="submit" style="width:100%;font-size:18px">📣 Mandar</button></form></div>
+  <p><small>El bot manda el mensaje a tus números permitidos. Nada más.</small></p>`);
+}
+
+app.get('/enviar', (req, res) => {
+  const key = String(req.query.key || '');
+  if (key !== ADMIN_KEY) {
+    return res.send(page('SIMsimd — Enviar', `<h1>📣 Mandar al bot</h1><div class="card"><p>Escribe tu clave para mandar.</p><form method="GET" action="/enviar"><label>Clave de admin</label><input type="password" name="key" placeholder="Tu clave de admin"><button type="submit">Entrar</button></form></div>`));
+  }
+  res.send(enviarPage(key));
+});
+
+app.post('/enviar', async (req, res) => {
+  const key = String(req.body.key || '');
+  if (key !== ADMIN_KEY) return res.status(403).send('Clave incorrecta.');
+  const message = String(req.body.message || '').trim();
+  if (!message) return res.send(enviarPage(key, '❌ Escribe el mensaje que quieres mandar.'));
+  if (!isReady || !sock) return res.send(enviarPage(key, '❌ El bot no está conectado a WhatsApp todavía. Escanea el QR primero.'));
+  const q = parseInt(String(req.body.quantity || ''), 10);
+  const quantity = Number.isFinite(q) ? Math.max(1, Math.min(q, 100000)) : undefined;
+  try {
+    const r = await sendMassive(message, quantity);
+    res.send(enviarPage(key, r.failed.length
+      ? `✅ Mandado a ${r.sent} de ${r.total} números. Fallaron: ${r.failed.join(', ')}.`
+      : `✅ Mandado a ${r.sent} número(s).`));
+  } catch (e) {
+    res.send(enviarPage(key, '❌ No se pudo mandar: ' + e.message));
   }
 });
 

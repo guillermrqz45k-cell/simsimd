@@ -43,6 +43,8 @@ SIMsimd usa Baileys, que no necesita navegador ni servidor: corre directo en tu 
 5. Agrega ese número al grupo y hazlo admin del grupo.
 6. Para usar el bot desde la web, abre en el navegador del celular `http://localhost:3000/admin` e ingresa tu clave de admin (por defecto `simsimd`, cámbiala con la variable `BOT_ADMIN_KEY`). Es tu panel web privado, con todo en un solo lugar: el botón de **encendido/apagado** del bot, una sección para **enviar la difusión desde la web** (escribes el mensaje y pones a cuántos números, de 1 a 100.000), un recuadro para **poner el número** al que quieres que le llegue la difusión (lo agregas y queda en la lista; también lo puedes eliminar), y el estado del **sorteo** abierto. Para más ajustes (bienvenida, mensajes, respuestas), abre `http://localhost:3000/config` con la misma clave.
 
+> **¿Solo quieres mandar y ya?** Abre `http://localhost:3000/enviar` con tu clave: es una página sencilla con un solo recuadro para el mensaje, la cantidad opcional (de 1 a 100.000) y el botón de mandar. Nada más.
+
 > El bot se vincula como un dispositivo más de WhatsApp (igual que WhatsApp Web). Usa un número secundario para el bot, no tu número principal: WhatsApp puede banear números que usan bots no oficiales.
 
 ### En una computadora o servidor
