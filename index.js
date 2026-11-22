@@ -25,6 +25,10 @@ let readyInfo = '';
 // ---- Configuración (edita config.json o la página web /config) ----
 const DEFAULT_CONFIG = {
   botName: 'SIMsimd',
+  // Interruptor maestro: true = bot encendido, false = bot apagado.
+  // Cuando está apagado el bot no responde ni manda nada; se vuelve a
+  // encender solo desde el panel web privado /admin.
+  botEnabled: true,
   // SOLO estos números reciben los mensajes masivos. Pon aquí TUS números
   // (con código de país, sin + ni espacios, ej: "573001234567").
   // El bot NO manda masivos a ningún número que no esté en esta lista.
@@ -92,6 +96,7 @@ function adminPanel() {
     `!estado — ver el sorteo abierto\n\n` +
     `*Configuración actual:*\n` +
     `• Bot: ${config.botName}\n` +
+    `• Estado: ${config.botEnabled ? '🟢 Encendido' : '🔴 Apagado'}\n` +
     `• Grupo: ${group}\n` +
     `• Números permitidos para difusión: ${nums}\n` +
     `• Mensaje diario: ${daily}\n` +
@@ -161,6 +166,9 @@ async function handleMessage(msg) {
   try {
     const jid = msg.key.remoteJid;
     if (!jid || msg.key.fromMe) return;
+    // Interruptor maestro: si el bot está apagado, no responde ni manda nada.
+    // Solo se vuelve a encender desde el panel web privado /admin.
+    if (!config.botEnabled) return;
     const senderId = msg.key.participant || jid;
     const body = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
     if (!body) return;
@@ -430,7 +438,7 @@ app.get('/', async (req, res) => {
   const status = isReady
     ? `✅ <b>Conectado</b> ${readyInfo ? 'como ' + readyInfo : ''}`
     : (qrString ? '⏳ Esperando que escanees el QR' : '🔄 Conectando…');
-  res.send(page('SIMsimd', `<h1>🤖 SIMsimd</h1><div class="card">${status}</div><p><a href="/qr">📷 Ver código QR para vincular</a></p><p><a href="/config">⚙️ Configuración</a></p><p><small>Bot de WhatsApp para tu grupo: bienvenida, moderación, sorteos y difusión a tus números. Corre en tu celular con Termux, gratis.</small></p>`));
+  res.send(page('SIMsimd', `<h1>🤖 SIMsimd</h1><div class="card">${status}</div><p><a href="/admin">🔒 Panel privado (encendido/apagado y números)</a></p><p><a href="/qr">📷 Ver código QR para vincular</a></p><p><a href="/config">⚙️ Configuración</a></p><p><small>Bot de WhatsApp para tu grupo: bienvenida, moderación, sorteos y difusión a tus números. Corre en tu celular con Termux, gratis.</small></p>`));
 });
 
 app.get('/qr', async (req, res) => {
@@ -495,6 +503,74 @@ app.post('/config', (req, res) => {
   } catch (e) {
     res.send(configForm(key, '❌ Error al guardar: ' + e.message));
   }
+});
+
+// ---- Panel privado /admin: solo tú, con tu clave ----
+// Encendido/apagado + recuadro para poner el número al que llega la difusión.
+function adminPage(key, msg = '') {
+  const nums = config.allowedNumbers || [];
+  const rows = nums.length
+    ? nums.map(n => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #333"><span>📱 ${n}</span><form method="POST" action="/admin/remove-number" style="margin:0"><input type="hidden" name="key" value="${key}"><input type="hidden" name="number" value="${n}"><button type="submit" style="background:#c0392b;padding:6px 12px">Eliminar</button></form></div>`).join('')
+    : '<p><small>Todavía no hay números. Agrega el primero abajo.</small></p>';
+  const state = config.botEnabled ? '🟢 ENCENDIDO' : '🔴 APAGADO';
+  const toggleBtn = config.botEnabled
+    ? `<button type="submit" style="background:#c0392b;width:100%;font-size:18px">⏻ APAGAR EL BOT</button>`
+    : `<button type="submit" style="width:100%;font-size:18px">⏻ ENCENDER EL BOT</button>`;
+  const conn = isReady ? `✅ Conectado ${readyInfo ? 'como ' + readyInfo : ''}` : (qrString ? '⏳ Esperando que escanees el QR' : '🔄 Conectando…');
+  return page('SIMsimd — Panel privado', `<h1>🤖 SIMsimd — Panel privado</h1>
+  ${msg ? `<div class="card">${msg}</div>` : ''}
+  <div class="card"><p><b>Estado del bot: ${state}</b></p><p>${conn}</p>
+  <form method="POST" action="/admin/toggle"><input type="hidden" name="key" value="${key}">${toggleBtn}</form>
+  <p><small>Cuando está apagado el bot no responde ni manda nada. Lo vuelves a encender aquí mismo.</small></p></div>
+  <div class="card"><h3>📱 Números que reciben la difusión</h3>${rows}
+  <form method="POST" action="/admin/add-number" style="margin-top:14px"><input type="hidden" name="key" value="${key}">
+  <label>Número (con código de país, ej. 573001234567)</label><input name="number" placeholder="573001234567" inputmode="numeric">
+  <button type="submit">➕ Agregar número</button></form>
+  <p><small>Solo a estos números les llega lo que mandes con !difundir. El bot no manda nada a ningún otro número.</small></p></div>
+  <p><a href="/config?key=${encodeURIComponent(key)}">⚙️ Más ajustes (bienvenida, mensajes, respuestas)</a></p>
+  <p><a href="/qr">📷 Ver código QR para vincular</a></p>
+  <p><a href="/">← Volver</a></p>`);
+}
+
+app.get('/admin', (req, res) => {
+  const key = String(req.query.key || '');
+  if (key !== ADMIN_KEY) {
+    return res.send(page('SIMsimd — Panel privado', `<h1>🔒 Panel privado — SIMsimd</h1><div class="card"><p>Solo el dueño entra aquí.</p><form method="GET" action="/admin"><label>Clave de admin</label><input type="password" name="key" placeholder="Tu clave de admin"><button type="submit">Entrar</button></form></div><p><small>La clave es la variable BOT_ADMIN_KEY del servidor.</small></p>`));
+  }
+  res.send(adminPage(key));
+});
+
+app.post('/admin/toggle', (req, res) => {
+  const key = String(req.body.key || '');
+  if (key !== ADMIN_KEY) return res.status(403).send('Clave incorrecta.');
+  config.botEnabled = !config.botEnabled;
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  res.send(adminPage(key, config.botEnabled ? '✅ Bot encendido.' : '⏻ Bot apagado. No responderá ni mandará nada hasta que lo enciendas.'));
+});
+
+app.post('/admin/add-number', (req, res) => {
+  const key = String(req.body.key || '');
+  if (key !== ADMIN_KEY) return res.status(403).send('Clave incorrecta.');
+  const num = String(req.body.number || '').replace(/\D/g, '');
+  if (!num || num.length < 7) {
+    return res.send(adminPage(key, '❌ Pon un número válido con código de país, ej. 573001234567.'));
+  }
+  if (!(config.allowedNumbers || []).includes(num)) {
+    config.allowedNumbers = [...(config.allowedNumbers || []), num];
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    res.send(adminPage(key, `✅ Número ${num} agregado. Ya le llega la difusión.`));
+  } else {
+    res.send(adminPage(key, `Ese número ${num} ya estaba en la lista.`));
+  }
+});
+
+app.post('/admin/remove-number', (req, res) => {
+  const key = String(req.body.key || '');
+  if (key !== ADMIN_KEY) return res.status(403).send('Clave incorrecta.');
+  const num = String(req.body.number || '').replace(/\D/g, '');
+  config.allowedNumbers = (config.allowedNumbers || []).filter(n => n !== num);
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  res.send(adminPage(key, `🗑️ Número ${num} eliminado de la lista.`));
 });
 
 app.listen(PORT, () => console.log(`🌐 Panel web en http://localhost:${PORT} ( /qr para vincular, /config para ajustes )`));
