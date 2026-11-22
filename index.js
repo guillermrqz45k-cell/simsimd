@@ -128,6 +128,34 @@ async function isAdmin(chat, authorId) {
   }
 }
 
+// ---- Panel de admin: comandos configurados y ajustes actuales ----
+function adminPanel() {
+  const nums = (config.allowedNumbers || []).length;
+  const group = config.groupId ? config.groupId : 'todos los grupos';
+  const daily = (config.dailyMessageHour === null || config.dailyMessageHour === undefined)
+    ? 'desactivado'
+    : `${config.dailyMessageHour}:00 — "${config.dailyMessage}"`;
+  const replies = Object.keys(config.autoReplies || {}).join(', ') || 'ninguna';
+  return (
+    `🛠️ *Panel de admin — ${config.botName}*\n\n` +
+    `*Comandos de admin:*\n` +
+    `!sorteo <premio> — abrir un sorteo\n` +
+    `!cerrar — cerrar el sorteo y elegir al ganador\n` +
+    `!difundir <mensaje> — mandar el mensaje a tus números permitidos\n\n` +
+    `*Comandos de todos:*\n` +
+    `!ayuda — ver los comandos\n` +
+    `!participo — entrar al sorteo abierto\n` +
+    `!estado — ver el sorteo abierto\n\n` +
+    `*Configuración actual:*\n` +
+    `• Bot: ${config.botName}\n` +
+    `• Grupo: ${group}\n` +
+    `• Números permitidos para difusión: ${nums}\n` +
+    `• Mensaje diario: ${daily}\n` +
+    `• Bienvenida: "${config.welcomeMessage}"\n` +
+    `• Respuestas automáticas: ${replies}`
+  );
+}
+
 // ---- Mensaje masivo SOLO a los números permitidos (los del dueño) ----
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function sendMassive(text) {
@@ -165,8 +193,17 @@ client.on('message', async (msg) => {
         await msg.reply(
           `🤖 *${config.botName}*\n\n` +
           `!difundir <mensaje> — mandar el mensaje a todos tus números permitidos\n` +
+          `/adm — ver los comandos y la configuración\n` +
           `!ayuda — ver esta lista`
         );
+        return;
+      }
+      if (lower === '/adm' || lower === '!admin') {
+        if (!isAllowedNumber) {
+          await msg.reply('Este bot solo recibe órdenes de los números permitidos por el dueño.');
+          return;
+        }
+        await msg.reply(adminPanel());
         return;
       }
       if (lower.startsWith('!difundir')) {
@@ -224,8 +261,19 @@ client.on('message', async (msg) => {
         `!participo — entrar al sorteo abierto\n` +
         `!cerrar — (solo admin) cierra el sorteo y elige al ganador\n` +
         `!estado — ver si hay sorteo abierto y cuántos participan\n` +
-        `!difundir <mensaje> — (solo admin) mandar el mensaje a tus números permitidos`
+        `!difundir <mensaje> — (solo admin) mandar el mensaje a tus números permitidos\n` +
+        `/adm — (solo admin) ver los comandos y la configuración`
       );
+      return;
+    }
+
+    if (lower === '/adm' || lower === '!admin') {
+      const admin = await isAdmin(chat, authorId);
+      if (!admin) {
+        await chat.sendMessage('Solo un admin puede ver el panel de admin.');
+        return;
+      }
+      await chat.sendMessage(adminPanel());
       return;
     }
 

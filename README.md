@@ -57,6 +57,7 @@ El estado del sorteo se guarda en `sorteo.json`, así que si el bot se reinicia,
 | `!cerrar` | Solo admin | Cierra el sorteo y anuncia al ganador |
 | `!estado` | Todos | Ver sorteo abierto y participantes |
 | `!difundir <mensaje>` | Solo admin (en grupo) o solo tus números (por privado) | Mandar el mensaje a tus números permitidos |
+| `/adm` o `!admin` | Solo admin (en grupo) o solo tus números (por privado) | Ver los comandos configurados y la configuración actual |
 
 ## Advertencia
 
