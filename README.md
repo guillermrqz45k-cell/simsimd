@@ -41,7 +41,7 @@ SIMsimd usa Baileys, que no necesita navegador ni servidor: corre directo en tu 
    - También puedes ver el QR grande abriendo en el navegador del celular `http://localhost:3000/qr`.
 4. La sesión queda guardada en la carpeta `auth`, así que la próxima vez no pide el QR. Para que el bot siga corriendo, deja Termux abierto (o usa `npm install -g pm2` y `pm2 start index.js` para que siga en segundo plano).
 5. Agrega ese número al grupo y hazlo admin del grupo.
-6. Para cambiar los ajustes desde el celular, abre en el navegador `http://localhost:3000/config` e ingresa tu clave de admin (por defecto `simsimd`, cámbiala con la variable `BOT_ADMIN_KEY`). Ahí editas tus números permitidos, el mensaje de bienvenida, el mensaje diario y las respuestas automáticas.
+6. Para cambiar los ajustes desde el celular, abre en el navegador `http://localhost:3000/admin` e ingresa tu clave de admin (por defecto `simsimd`, cámbiala con la variable `BOT_ADMIN_KEY`). Es tu panel privado: ahí tienes el botón de **encendido/apagado** del bot, un recuadro para **poner el número** al que quieres que le llegue la difusión (lo agregas y queda en la lista; también lo puedes eliminar), y una casilla para **enviar la difusión con la cantidad que elijas (de 1 a 100.000 números)**. Para más ajustes (bienvenida, mensajes, respuestas), abre `http://localhost:3000/config` con la misma clave.
 
 > El bot se vincula como un dispositivo más de WhatsApp (igual que WhatsApp Web). Usa un número secundario para el bot, no tu número principal: WhatsApp puede banear números que usan bots no oficiales.
 

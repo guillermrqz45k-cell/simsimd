@@ -119,11 +119,15 @@ async function isAdmin(groupJid, senderId) {
 }
 
 // ---- Mensaje masivo SOLO a los números permitidos (los del dueño) ----
-async function sendMassive(text) {
+// limit: cuántos números reciben el mensaje (1–100000). Si no se pasa,
+// les llega a todos los de la lista.
+async function sendMassive(text, limit) {
   const numbers = config.allowedNumbers || [];
+  const n = (limit && Number.isFinite(limit) && limit > 0) ? Math.min(Math.floor(limit), 100000) : numbers.length;
+  const target = numbers.slice(0, n);
   let sent = 0;
   const failed = [];
-  for (const num of numbers) {
+  for (const num of target) {
     try {
       const id = `${String(num).replace(/\D/g, '')}@s.whatsapp.net`;
       await sock.sendMessage(id, { text });
@@ -133,7 +137,7 @@ async function sendMassive(text) {
       failed.push(num);
     }
   }
-  return { sent, failed, total: numbers.length };
+  return { sent, failed, total: target.length };
 }
 
 // ---- Mensaje automático diario ----
@@ -527,6 +531,12 @@ function adminPage(key, msg = '') {
   <label>Número (con código de país, ej. 573001234567)</label><input name="number" placeholder="573001234567" inputmode="numeric">
   <button type="submit">➕ Agregar número</button></form>
   <p><small>Solo a estos números les llega lo que mandes con !difundir. El bot no manda nada a ningún otro número.</small></p></div>
+  <div class="card"><h3>📣 Enviar difusión desde aquí</h3>
+  <form method="POST" action="/admin/difundir"><input type="hidden" name="key" value="${key}">
+  <label>Mensaje</label><textarea name="message" rows="3" placeholder="Escribe el mensaje que quieres mandar"></textarea>
+  <label>¿A cuántos números? (de 1 a 100.000)</label><input name="quantity" type="number" min="1" max="100000" placeholder="Ej. 50 — vacío = a todos los de la lista">
+  <button type="submit">📣 Enviar difusión</button></form>
+  <p><small>El mensaje les llega a los primeros números de tu lista, hasta la cantidad que pongas (máximo 100.000). Si la lista tiene menos, les llega a todos los que hay.</small></p></div>
   <p><a href="/config?key=${encodeURIComponent(key)}">⚙️ Más ajustes (bienvenida, mensajes, respuestas)</a></p>
   <p><a href="/qr">📷 Ver código QR para vincular</a></p>
   <p><a href="/">← Volver</a></p>`);
@@ -571,6 +581,25 @@ app.post('/admin/remove-number', (req, res) => {
   config.allowedNumbers = (config.allowedNumbers || []).filter(n => n !== num);
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
   res.send(adminPage(key, `🗑️ Número ${num} eliminado de la lista.`));
+});
+
+// Difusión desde el panel privado, con cantidad (1–100000).
+app.post('/admin/difundir', async (req, res) => {
+  const key = String(req.body.key || '');
+  if (key !== ADMIN_KEY) return res.status(403).send('Clave incorrecta.');
+  const message = String(req.body.message || '').trim();
+  if (!message) return res.send(adminPage(key, '❌ Escribe el mensaje que quieres mandar.'));
+  if (!isReady || !sock) return res.send(adminPage(key, '❌ El bot no está conectado a WhatsApp todavía. Escanea el QR primero.'));
+  const q = parseInt(String(req.body.quantity || ''), 10);
+  const quantity = Number.isFinite(q) ? Math.max(1, Math.min(q, 100000)) : undefined;
+  try {
+    const r = await sendMassive(message, quantity);
+    res.send(adminPage(key, r.failed.length
+      ? `✅ Difusión enviada a ${r.sent} de ${r.total} números. Fallaron: ${r.failed.join(', ')}.`
+      : `✅ Difusión enviada a ${r.sent} número(s).`));
+  } catch (e) {
+    res.send(adminPage(key, '❌ No se pudo enviar la difusión: ' + e.message));
+  }
 });
 
 app.listen(PORT, () => console.log(`🌐 Panel web en http://localhost:${PORT} ( /qr para vincular, /config para ajustes )`));
