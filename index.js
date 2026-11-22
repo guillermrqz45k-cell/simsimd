@@ -4,8 +4,21 @@
 // por WhatsApp: usa un número secundario, no tu número principal.
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
+const express = require('express');
 const fs = require('fs');
 const path = require('path');
+
+// Clave para abrir la página de configuración desde el celular.
+// Se lee de la variable de entorno BOT_ADMIN_KEY; si no está puesta, usa 'simsimd'.
+// ¡Cámbiala en Railway para que solo tú puedas entrar!
+const ADMIN_KEY = process.env.BOT_ADMIN_KEY || 'simsimd';
+const PORT = process.env.PORT || 3000;
+
+// Estado de conexión (para la página web)
+let qrString = null;
+let isReady = false;
+let readyInfo = '';
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const STATE_PATH = path.join(__dirname, 'sorteo.json');
@@ -63,12 +76,17 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => {
+  qrString = qr;
+  isReady = false;
   console.log('Escanea este código QR con el WhatsApp del número bot:');
   qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
-  console.log('✅ Bot listo y conectado.');
+  qrString = null;
+  isReady = true;
+  readyInfo = client.info ? `${client.info.pushname || ''} (${client.info.wid ? client.info.wid.user : ''})` : '';
+  console.log('✅ Bot listo y conectado.', readyInfo);
   scheduleDailyMessage();
 });
 
@@ -372,6 +390,88 @@ client.on('message', async (msg) => {
     console.error('Error procesando mensaje:', e.message);
   }
 });
+
+// ---- Servidor web: QR para vincular desde el celular + configuración ----
+const app = express();
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+const page = (title, body) => `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>body{font-family:sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}h1{color:#25D366}a{color:#25D366}input,textarea,select{width:100%;padding:10px;margin:6px 0 14px;border-radius:8px;border:1px solid #444;background:#222;color:#eee;box-sizing:border-box}button{background:#25D366;color:#111;border:0;padding:12px 20px;border-radius:8px;font-weight:bold;cursor:pointer}img{max-width:280px;width:100%;background:#fff;padding:10px;border-radius:12px}.card{background:#1c1c1c;border:1px solid #333;border-radius:12px;padding:16px;margin:14px 0}small{color:#aaa}</style></head><body>${body}</body></html>`;
+
+app.get('/api/health', (req, res) => res.json({ ok: true, app: 'simsimd', ready: isReady }));
+
+app.get('/', async (req, res) => {
+  const status = isReady
+    ? `✅ <b>Conectado</b> ${readyInfo ? 'como ' + readyInfo : ''}`
+    : (qrString ? '⏳ Esperando que escanees el QR' : '🔄 Conectando…');
+  res.send(page('SIMsimd', `<h1>🤖 SIMsimd</h1><div class="card">${status}</div><p><a href="/qr">📷 Ver código QR para vincular</a></p><p><a href="/config">⚙️ Configuración</a></p><p><small>Bot de WhatsApp para tu grupo: bienvenida, moderación, sorteos y difusión a tus números.</small></p>`));
+});
+
+app.get('/qr', async (req, res) => {
+  if (isReady) {
+    return res.send(page('SIMsimd — QR', `<h1>🤖 SIMsimd</h1><div class="card">✅ Ya está vinculado y conectado ${readyInfo ? 'como ' + readyInfo : ''}. No necesitas escanear nada.</div><p><a href="/">← Volver</a></p>`));
+  }
+  if (!qrString) {
+    return res.send(page('SIMsimd — QR', `<h1>🤖 SIMsimd</h1><div class="card">🔄 Generando el código QR… recarga la página en unos segundos.</div><p><a href="/">← Volver</a></p>`));
+  }
+  try {
+    const dataUrl = await QRCode.toDataURL(qrString, { width: 280, margin: 1 });
+    res.send(page('SIMsimd — QR', `<h1>🤖 SIMsimd</h1><div class="card"><p>Escanea este código con el WhatsApp del número bot:<br><small>WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo</small></p><img src="${dataUrl}" alt="Código QR"><p><small>Si el código vence, recarga la página para ver uno nuevo.</small></p></div><p><a href="/">← Volver</a></p>`));
+  } catch (e) {
+    res.status(500).send('No se pudo generar el QR: ' + e.message);
+  }
+});
+
+function configForm(key, msg = '') {
+  const nums = (config.allowedNumbers || []).join('\n');
+  const replies = JSON.stringify(config.autoReplies || {}, null, 2);
+  return page('SIMsimd — Configuración', `<h1>⚙️ Configuración — SIMsimd</h1>${msg ? `<div class="card">${msg}</div>` : ''}
+  <form method="POST" action="/config">
+  <input type="hidden" name="key" value="${key}">
+  <label>Nombre del bot</label><input name="botName" value="${config.botName || ''}">
+  <label>Números permitidos para difusión (uno por línea, con código de país, ej. 573001234567)</label><textarea name="allowedNumbers" rows="4" placeholder="573001234567">${nums}</textarea>
+  <label>ID del grupo (vacío = todos los grupos)</label><input name="groupId" value="${config.groupId || ''}">
+  <label>Mensaje de bienvenida ({name} = nombre del que entra)</label><textarea name="welcomeMessage" rows="2">${config.welcomeMessage || ''}</textarea>
+  <label>Hora del mensaje diario (0–23, vacío = desactivado)</label><input name="dailyMessageHour" value="${(config.dailyMessageHour === null || config.dailyMessageHour === undefined) ? '' : config.dailyMessageHour}">
+  <label>Mensaje diario</label><textarea name="dailyMessage" rows="2">${config.dailyMessage || ''}</textarea>
+  <label>Respuestas automáticas (JSON: palabra → respuesta)</label><textarea name="autoReplies" rows="6">${replies}</textarea>
+  <button type="submit">💾 Guardar configuración</button>
+  </form><p><a href="/">← Volver</a></p><p><small>La configuración se guarda en el servidor. El bot la aplica sin reiniciar, salvo la hora del mensaje diario.</small></p>`);
+}
+
+app.get('/config', (req, res) => {
+  const key = String(req.query.key || '');
+  if (key !== ADMIN_KEY) {
+    return res.send(page('SIMsimd — Configuración', `<h1>⚙️ Configuración</h1><div class="card"><form method="GET" action="/config"><label>Clave de admin</label><input type="password" name="key" placeholder="Tu clave de admin"><button type="submit">Entrar</button></form></div><p><small>La clave es la variable BOT_ADMIN_KEY del servidor.</small></p>`));
+  }
+  res.send(configForm(key));
+});
+
+app.post('/config', (req, res) => {
+  const key = String(req.body.key || '');
+  if (key !== ADMIN_KEY) return res.status(403).send('Clave incorrecta.');
+  try {
+    config.botName = String(req.body.botName || 'SIMsimd');
+    config.allowedNumbers = String(req.body.allowedNumbers || '').split('\n').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
+    config.groupId = String(req.body.groupId || '').trim();
+    config.welcomeMessage = String(req.body.welcomeMessage || '');
+    config.dailyMessage = String(req.body.dailyMessage || '');
+    const h = String(req.body.dailyMessageHour || '').trim();
+    config.dailyMessageHour = h === '' ? null : Math.max(0, Math.min(23, parseInt(h, 10) || 0));
+    try {
+      config.autoReplies = JSON.parse(String(req.body.autoReplies || '{}'));
+    } catch (e) {
+      return res.send(configForm(key, '❌ Las respuestas automáticas no son un JSON válido. No se guardó nada.'));
+    }
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    scheduleDailyMessage();
+    res.send(configForm(key, '✅ Configuración guardada.'));
+  } catch (e) {
+    res.send(configForm(key, '❌ Error al guardar: ' + e.message));
+  }
+});
+
+app.listen(PORT, () => console.log(`🌐 Panel web en http://localhost:${PORT} ( /qr para vincular, /config para ajustes )`));
 
 client.initialize();
 console.log('Iniciando bot… escanea el QR cuando aparezca.');

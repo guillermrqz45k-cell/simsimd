@@ -24,18 +24,29 @@ Bot para administrar tu grupo de WhatsApp: da la bienvenida, manda mensajes auto
 
 ## Cómo ponerlo en marcha
 
+### Desde tu celular (recomendado: en Railway, 24/7)
+
+1. El bot corre en un servidor (Railway). Abre su página web en tu celular.
+2. Toca **📷 Ver código QR para vincular** y escanea el QR con el WhatsApp del número bot: WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo.
+3. Agrega ese número al grupo y hazlo admin del grupo.
+4. Para cambiar los ajustes desde el celular, abre **⚙️ Configuración** e ingresa tu clave de admin (la variable `BOT_ADMIN_KEY` del servidor; por defecto `simsimd`, cámbiala). Ahí editas tus números permitidos, el mensaje de bienvenida, el mensaje diario y las respuestas automáticas, y guardas.
+
+### En una computadora
+
 ```bash
 cd whatsapp-group-bot
 npm install
 node index.js
 ```
 
-1. Al arrancar aparece un código QR en la terminal.
+1. Al arrancar aparece un código QR en la terminal (y también en la página web `http://localhost:3000/qr`).
 2. En el teléfono del número bot, abre WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo, y escanea el QR.
 3. La sesión queda guardada en `.wwebjs_auth`, así que la próxima vez no pide el QR.
 4. Agrega ese número al grupo y hazlo admin del grupo.
 
-## Configuración (`config.json`)
+## Configuración (`config.json` o desde la página web `/config`)
+
+- `botName`: nombre del bot, `SIMsimd`.
 
 - `botName`: nombre del bot, `SIMsimd`.
 - `allowedNumbers`: **la lista de TUS números** (con código de país, sin `+` ni espacios, ej. `"573001234567"`). Solo a estos números les llegan las difusiones de `!difundir`, y solo desde estos números se le puede escribir `!difundir` al bot por privado. Si la lista está vacía, la difusión no manda nada.
