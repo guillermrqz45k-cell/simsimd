@@ -24,24 +24,39 @@ Bot para administrar tu grupo de WhatsApp: da la bienvenida, manda mensajes auto
 
 ## Cómo ponerlo en marcha
 
-### Desde tu celular (recomendado: en Railway, 24/7)
+### Desde tu celular, GRATIS con Termux (recomendado)
 
-1. El bot corre en un servidor (Railway). Abre su página web en tu celular.
-2. Toca **📷 Ver código QR para vincular** y escanea el QR con el WhatsApp del número bot: WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo.
-3. Agrega ese número al grupo y hazlo admin del grupo.
-4. Para cambiar los ajustes desde el celular, abre **⚙️ Configuración** e ingresa tu clave de admin (la variable `BOT_ADMIN_KEY` del servidor; por defecto `simsimd`, cámbiala). Ahí editas tus números permitidos, el mensaje de bienvenida, el mensaje diario y las respuestas automáticas, y guardas.
+SIMsimd usa Baileys, que no necesita navegador ni servidor: corre directo en tu celular con Termux, gratis, sin pagar nada.
 
-### En una computadora
+1. **Instala Termux** desde F-Droid (busca "Termux" en la app F-Droid; la versión de Play Store está vieja, no la uses).
+2. Abre Termux y escribe estos comandos, uno por uno:
+   ```bash
+   pkg update && pkg install nodejs git -y
+   git clone https://github.com/guillermrqz45k-cell/simsimd
+   cd simsimd
+   npm install
+   node index.js
+   ```
+3. Va a aparecer un código QR en la pantalla. Escanéalo con el WhatsApp del número bot: WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo.
+   - También puedes ver el QR grande abriendo en el navegador del celular `http://localhost:3000/qr`.
+4. La sesión queda guardada en la carpeta `auth`, así que la próxima vez no pide el QR. Para que el bot siga corriendo, deja Termux abierto (o usa `npm install -g pm2` y `pm2 start index.js` para que siga en segundo plano).
+5. Agrega ese número al grupo y hazlo admin del grupo.
+6. Para cambiar los ajustes desde el celular, abre en el navegador `http://localhost:3000/config` e ingresa tu clave de admin (por defecto `simsimd`, cámbiala con la variable `BOT_ADMIN_KEY`). Ahí editas tus números permitidos, el mensaje de bienvenida, el mensaje diario y las respuestas automáticas.
+
+> El bot se vincula como un dispositivo más de WhatsApp (igual que WhatsApp Web). Usa un número secundario para el bot, no tu número principal: WhatsApp puede banear números que usan bots no oficiales.
+
+### En una computadora o servidor
 
 ```bash
-cd whatsapp-group-bot
+git clone https://github.com/guillermrqz45k-cell/simsimd
+cd simsimd
 npm install
 node index.js
 ```
 
 1. Al arrancar aparece un código QR en la terminal (y también en la página web `http://localhost:3000/qr`).
 2. En el teléfono del número bot, abre WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo, y escanea el QR.
-3. La sesión queda guardada en `.wwebjs_auth`, así que la próxima vez no pide el QR.
+3. La sesión queda guardada en la carpeta `auth`, así que la próxima vez no pide el QR.
 4. Agrega ese número al grupo y hazlo admin del grupo.
 
 ## Configuración (`config.json` o desde la página web `/config`)
@@ -72,4 +87,4 @@ El estado del sorteo se guarda en `sorteo.json`, así que si el bot se reinicia,
 
 ## Advertencia
 
-WhatsApp no tiene una API oficial para bots en grupos. Este bot automatiza WhatsApp Web, lo cual va contra las reglas de WhatsApp y puede terminar en baneo del número. Úsalo con un número secundario y no abuses (no mandes cientos de mensajes por minuto).
+WhatsApp no tiene una API oficial para bots en grupos. Este bot usa Baileys, que se conecta como un dispositivo más (igual que WhatsApp Web), lo cual va contra las reglas de WhatsApp y puede terminar en baneo del número. Úsalo con un número secundario y no abuses (no mandes cientos de mensajes por minuto).

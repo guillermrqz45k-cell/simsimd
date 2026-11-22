@@ -1,17 +1,19 @@
-// Bot SIMsimd para grupo de WhatsApp — bienvenida, moderación de enlaces,
-// sorteos y mensajes masivos SOLO a los números propios del dueño.
-// Usa whatsapp-web.js (no oficial). El número que se vincula puede ser baneado
-// por WhatsApp: usa un número secundario, no tu número principal.
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+// SIMsimd — Bot de WhatsApp para tu grupo (versión Baileys, sin navegador).
+// Corre en Termux en tu celular, GRATIS, sin servidor. No usa Chromium.
+// Funciones: bienvenida, mensajes automáticos, moderación de enlaces,
+// sorteos con ganador automático, panel /ADM y difusión solo a TUS números.
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
+const CONFIG_PATH = path.join(__dirname, 'config.json');
+const STATE_PATH = path.join(__dirname, 'sorteo.json');
+
 // Clave para abrir la página de configuración desde el celular.
 // Se lee de la variable de entorno BOT_ADMIN_KEY; si no está puesta, usa 'simsimd'.
-// ¡Cámbiala en Railway para que solo tú puedas entrar!
+// ¡Cámbiala para que solo tú puedas entrar!
 const ADMIN_KEY = process.env.BOT_ADMIN_KEY || 'simsimd';
 const PORT = process.env.PORT || 3000;
 
@@ -20,10 +22,7 @@ let qrString = null;
 let isReady = false;
 let readyInfo = '';
 
-const CONFIG_PATH = path.join(__dirname, 'config.json');
-const STATE_PATH = path.join(__dirname, 'sorteo.json');
-
-// ---- Configuración (edita config.json) ----
+// ---- Configuración (edita config.json o la página web /config) ----
 const DEFAULT_CONFIG = {
   botName: 'SIMsimd',
   // SOLO estos números reciben los mensajes masivos. Pon aquí TUS números
@@ -39,7 +38,7 @@ const DEFAULT_CONFIG = {
   dailyMessage: "¡Buenos días grupo! ☀️ Que tengan un buen día.",
   // Palabras que activan una respuesta automática (el bot responde solo en el grupo)
   autoReplies: {
-    "hola bot": "¡Hola! 👋 Soy el bot del grupo. Escribe !ayuda para ver lo que puedo hacer.",
+    "hola bot": "¡Hola! 👋 Soy SIMsimd, el bot del grupo. Escribe !ayuda para ver lo que puedo hacer.",
     "reglas": "📌 Reglas del grupo:\n1. Respeto ante todo.\n2. Nada de enlaces sin permiso de un admin.\n3. Nada de spam."
   }
 };
@@ -69,82 +68,9 @@ function saveSorteo() {
 }
 
 const LINK_RE = /(https?:\/\/|www\.)[^\s]+/i;
-
-const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: path.join(__dirname, '.wwebjs_auth') }),
-  puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
-});
-
-client.on('qr', (qr) => {
-  qrString = qr;
-  isReady = false;
-  console.log('Escanea este código QR con el WhatsApp del número bot:');
-  qrcode.generate(qr, { small: true });
-});
-
-client.on('ready', () => {
-  qrString = null;
-  isReady = true;
-  readyInfo = client.info ? `${client.info.pushname || ''} (${client.info.wid ? client.info.wid.user : ''})` : '';
-  console.log('✅ Bot listo y conectado.', readyInfo);
-  scheduleDailyMessage();
-});
-
-client.on('auth_failure', (msg) => {
-  console.error('❌ Falló la autenticación:', msg);
-});
-
-client.on('disconnected', (reason) => {
-  console.log('Bot desconectado:', reason);
-});
-
-// ---- Bienvenida cuando alguien entra al grupo ----
-client.on('group_join', async (notification) => {
-  try {
-    const chat = await notification.getChat();
-    if (!chat.isGroup) return;
-    if (config.groupId && chat.id._serialized !== config.groupId) return;
-    const name = notification.recipientIds
-      .map(id => `@${id.user}`).join(', ');
-    const text = config.welcomeMessage.replace('{name}', name);
-    await chat.sendMessage(text, { mentions: notification.recipientIds });
-    console.log('Bienvenida enviada a:', name);
-  } catch (e) {
-    console.error('Error en bienvenida:', e.message);
-  }
-});
-
-// ---- Mensaje automático diario ----
-let dailyTimer = null;
-function scheduleDailyMessage() {
-  if (config.dailyMessageHour === null || config.dailyMessageHour === undefined) return;
-  if (dailyTimer) clearInterval(dailyTimer);
-  dailyTimer = setInterval(async () => {
-    const now = new Date();
-    if (now.getHours() !== config.dailyMessageHour || now.getMinutes() !== 0) return;
-    try {
-      const chats = await client.getChats();
-      for (const chat of chats) {
-        if (!chat.isGroup) continue;
-        if (config.groupId && chat.id._serialized !== config.groupId) continue;
-        await chat.sendMessage(config.dailyMessage);
-      }
-    } catch (e) {
-      console.error('Error en mensaje diario:', e.message);
-    }
-  }, 60 * 1000);
-}
-
-// ---- Ayuda: saber si quien escribe es admin del grupo ----
-async function isAdmin(chat, authorId) {
-  try {
-    const participants = chat.participants || [];
-    const p = participants.find(x => x.id._serialized === authorId);
-    return !!(p && p.isAdmin);
-  } catch (e) {
-    return false;
-  }
-}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const normNum = (id) => String(id || '').split('@')[0].replace(/\D/g, '');
+const isGroupJid = (jid) => String(jid || '').endsWith('@g.us');
 
 // ---- Panel de admin: comandos configurados y ajustes actuales ----
 function adminPanel() {
@@ -174,16 +100,28 @@ function adminPanel() {
   );
 }
 
+let sock = null;
+
+// ---- Saber si quien escribe es admin del grupo ----
+async function isAdmin(groupJid, senderId) {
+  try {
+    const metadata = await sock.groupMetadata(groupJid);
+    const p = (metadata.participants || []).find(x => x.id === senderId);
+    return !!(p && (p.admin === 'admin' || p.admin === 'superadmin'));
+  } catch (e) {
+    return false;
+  }
+}
+
 // ---- Mensaje masivo SOLO a los números permitidos (los del dueño) ----
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function sendMassive(text) {
   const numbers = config.allowedNumbers || [];
   let sent = 0;
   const failed = [];
   for (const num of numbers) {
     try {
-      const id = `${String(num).replace(/\D/g, '')}@c.us`;
-      await client.sendMessage(id, text);
+      const id = `${String(num).replace(/\D/g, '')}@s.whatsapp.net`;
+      await sock.sendMessage(id, { text });
       sent++;
       await sleep(3000); // pausa entre mensajes para no parecer spam
     } catch (e) {
@@ -193,68 +131,88 @@ async function sendMassive(text) {
   return { sent, failed, total: numbers.length };
 }
 
-// ---- Mensajes: moderación + comandos ----
-client.on('message', async (msg) => {
+// ---- Mensaje automático diario ----
+let dailyTimer = null;
+async function sendDailyToGroups() {
+  if (!sock) return;
   try {
-    const chat = await msg.getChat();
-    if (msg.fromMe) return;
+    const groups = await sock.groupFetchAllParticipating();
+    for (const [jid] of Object.entries(groups)) {
+      if (config.groupId && jid !== config.groupId) continue;
+      await sock.sendMessage(jid, { text: config.dailyMessage });
+    }
+  } catch (e) {
+    console.error('Error en mensaje diario:', e.message);
+  }
+}
+function scheduleDailyMessage() {
+  if (config.dailyMessageHour === null || config.dailyMessageHour === undefined) return;
+  if (dailyTimer) clearInterval(dailyTimer);
+  dailyTimer = setInterval(() => {
+    const now = new Date();
+    if (now.getHours() === config.dailyMessageHour && now.getMinutes() === 0) {
+      sendDailyToGroups();
+    }
+  }, 60 * 1000);
+}
 
-    const authorId = msg.author || msg.from;
-    const body = (msg.body || '').trim();
+// ---- Procesar un mensaje entrante ----
+async function handleMessage(msg) {
+  try {
+    const jid = msg.key.remoteJid;
+    if (!jid || msg.key.fromMe) return;
+    const senderId = msg.key.participant || jid;
+    const body = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
+    if (!body) return;
     const lower = body.toLowerCase();
-    const senderNumber = String(authorId).split('@')[0].replace(/\D/g, '');
-    const isAllowedNumber = (config.allowedNumbers || []).map(n => String(n).replace(/\D/g, '')).includes(senderNumber);
+    const senderNumber = normNum(senderId);
+    const isAllowedNumber = (config.allowedNumbers || []).map(n => normNum(n)).includes(senderNumber);
+    const inGroup = isGroupJid(jid);
 
-    // --- Chat privado con el bot: solo !difundir y !ayuda, y solo desde TUS números ---
-    if (!chat.isGroup) {
+    // --- Chat privado con el bot: solo !difundir, /adm y !ayuda, y solo desde TUS números ---
+    if (!inGroup) {
       if (lower === '!ayuda' || lower === '!help') {
-        await msg.reply(
-          `🤖 *${config.botName}*\n\n` +
-          `!difundir <mensaje> — mandar el mensaje a todos tus números permitidos\n` +
-          `/adm — ver los comandos y la configuración\n` +
-          `!ayuda — ver esta lista`
-        );
+        await sock.sendMessage(jid, { text: `🤖 *${config.botName}*\n\n!difundir <mensaje> — mandar el mensaje a todos tus números permitidos\n/adm — ver los comandos y la configuración\n!ayuda — ver esta lista` });
         return;
       }
       if (lower === '/adm' || lower === '!admin') {
         if (!isAllowedNumber) {
-          await msg.reply('Este bot solo recibe órdenes de los números permitidos por el dueño.');
+          await sock.sendMessage(jid, { text: 'Este bot solo recibe órdenes de los números permitidos por el dueño.' });
           return;
         }
-        await msg.reply(adminPanel());
+        await sock.sendMessage(jid, { text: adminPanel() });
         return;
       }
       if (lower.startsWith('!difundir')) {
         if (!isAllowedNumber) {
-          await msg.reply('Este bot solo recibe órdenes de los números permitidos por el dueño.');
+          await sock.sendMessage(jid, { text: 'Este bot solo recibe órdenes de los números permitidos por el dueño.' });
           return;
         }
         const text = body.slice('!difundir'.length).trim();
         if (!text) {
-          await msg.reply('Escribe el mensaje después de !difundir. Ej: !difundir Hola, esto es una prueba.');
+          await sock.sendMessage(jid, { text: 'Escribe el mensaje después de !difundir. Ej: !difundir Hola, esto es una prueba.' });
           return;
         }
         const result = await sendMassive(text);
-        await msg.reply(`📣 Difusión enviada a ${result.sent} de ${result.total} números permitidos.${result.failed.length ? ' Falló en: ' + result.failed.join(', ') : ''}`);
+        await sock.sendMessage(jid, { text: `📣 Difusión enviada a ${result.sent} de ${result.total} números permitidos.${result.failed.length ? ' Falló en: ' + result.failed.join(', ') : ''}` });
         return;
       }
       return; // en privado no respondo a nada más
     }
 
-    if (config.groupId && chat.id._serialized !== config.groupId) return;
+    if (config.groupId && jid !== config.groupId) return;
 
     // --- Moderación: borrar enlaces de quien NO sea admin ---
     if (LINK_RE.test(body)) {
-      const admin = await isAdmin(chat, authorId);
+      const admin = await isAdmin(jid, senderId);
       if (!admin) {
         try {
-          await msg.delete(true);
-          const contact = await msg.getContact();
-          await chat.sendMessage(
-            `⚠️ @${contact.number}, los enlaces solo los pueden compartir los admins. Tu mensaje fue eliminado.`,
-            { mentions: [authorId] }
-          );
-          console.log('Enlace eliminado de:', authorId);
+          await sock.sendMessage(jid, { delete: msg.key });
+          await sock.sendMessage(jid, {
+            text: `⚠️ @${senderNumber}, los enlaces solo los pueden compartir los admins. Tu mensaje fue eliminado.`,
+            mentions: [senderId]
+          });
+          console.log('Enlace eliminado de:', senderId);
         } catch (e) {
           console.error('No pude eliminar el enlace (¿el bot es admin del grupo?):', e.message);
         }
@@ -265,113 +223,98 @@ client.on('message', async (msg) => {
     // --- Respuestas automáticas por palabra clave ---
     for (const [key, reply] of Object.entries(config.autoReplies || {})) {
       if (lower.includes(key.toLowerCase())) {
-        await chat.sendMessage(reply);
+        await sock.sendMessage(jid, { text: reply });
         return;
       }
     }
 
     // --- Comandos ---
     if (lower === '!ayuda' || lower === '!help') {
-      await chat.sendMessage(
-        `🤖 *${config.botName} — Comandos*\n\n` +
-        `!ayuda — ver esta lista\n` +
-        `!sorteo <premio> — (solo admin) abre un sorteo\n` +
-        `!participo — entrar al sorteo abierto\n` +
-        `!cerrar — (solo admin) cierra el sorteo y elige al ganador\n` +
-        `!estado — ver si hay sorteo abierto y cuántos participan\n` +
-        `!difundir <mensaje> — (solo admin) mandar el mensaje a tus números permitidos\n` +
-        `/adm — (solo admin) ver los comandos y la configuración`
-      );
+      await sock.sendMessage(jid, {
+        text: `🤖 *${config.botName} — Comandos*\n\n` +
+          `!ayuda — ver esta lista\n` +
+          `!sorteo <premio> — (solo admin) abre un sorteo\n` +
+          `!participo — entrar al sorteo abierto\n` +
+          `!cerrar — (solo admin) cierra el sorteo y elige al ganador\n` +
+          `!estado — ver si hay sorteo abierto y cuántos participan\n` +
+          `!difundir <mensaje> — (solo admin) mandar el mensaje a tus números permitidos\n` +
+          `/adm — (solo admin) ver los comandos y la configuración`
+      });
       return;
     }
 
     if (lower === '/adm' || lower === '!admin') {
-      const admin = await isAdmin(chat, authorId);
+      const admin = await isAdmin(jid, senderId);
       if (!admin) {
-        await chat.sendMessage('Solo un admin puede ver el panel de admin.');
+        await sock.sendMessage(jid, { text: 'Solo un admin puede ver el panel de admin.' });
         return;
       }
-      await chat.sendMessage(adminPanel());
-      return;
-    }
-
-    if (lower.startsWith('!difundir')) {
-      const admin = await isAdmin(chat, authorId);
-      if (!admin) {
-        await chat.sendMessage('Solo un admin puede mandar una difusión.');
-        return;
-      }
-      const text = body.slice('!difundir'.length).trim();
-      if (!text) {
-        await chat.sendMessage('Escribe el mensaje después de !difundir. Ej: !difundir Hola, esto es una prueba.');
-        return;
-      }
-      const result = await sendMassive(text);
-      await chat.sendMessage(`📣 Difusión enviada a ${result.sent} de ${result.total} números permitidos.${result.failed.length ? ' Falló en: ' + result.failed.join(', ') : ''}`);
+      await sock.sendMessage(jid, { text: adminPanel() });
       return;
     }
 
     if (lower === '!estado') {
       if (!sorteo.activo) {
-        await chat.sendMessage('No hay ningún sorteo abierto ahora mismo.');
+        await sock.sendMessage(jid, { text: 'No hay ningún sorteo abierto ahora mismo.' });
       } else {
-        await chat.sendMessage(
-          `🎁 Sorteo abierto: *${sorteo.premio}*\nParticipantes: ${sorteo.participantes.length}\nEscribe !participo para entrar.`
-        );
+        await sock.sendMessage(jid, {
+          text: `🎁 Sorteo abierto: *${sorteo.premio}*\nParticipantes: ${sorteo.participantes.length}\nEscribe !participo para entrar.`
+        });
       }
       return;
     }
 
     if (lower.startsWith('!sorteo')) {
-      const admin = await isAdmin(chat, authorId);
+      const admin = await isAdmin(jid, senderId);
       if (!admin) {
-        await chat.sendMessage('Solo un admin puede abrir un sorteo.');
+        await sock.sendMessage(jid, { text: 'Solo un admin puede abrir un sorteo.' });
         return;
       }
       if (sorteo.activo) {
-        await chat.sendMessage(`Ya hay un sorteo abierto: *${sorteo.premio}*. Ciérralo con !cerrar antes de abrir otro.`);
+        await sock.sendMessage(jid, { text: `Ya hay un sorteo abierto: *${sorteo.premio}*. Ciérralo con !cerrar antes de abrir otro.` });
         return;
       }
       const premio = body.slice('!sorteo'.length).trim() || 'premio sorpresa';
       sorteo = { activo: true, premio, participantes: [] };
       saveSorteo();
-      await chat.sendMessage(
-        `🎁 ¡SORTEO ABIERTO!\nPremio: *${premio}*\n\nEscribe !participo para participar. El sorteo se cierra cuando un admin escriba !cerrar.`
-      );
+      await sock.sendMessage(jid, {
+        text: `🎁 ¡SORTEO ABIERTO!\nPremio: *${premio}*\n\nEscribe !participo para participar. El sorteo se cierra cuando un admin escriba !cerrar.`
+      });
       return;
     }
 
     if (lower === '!participo') {
       if (!sorteo.activo) {
-        await chat.sendMessage('No hay ningún sorteo abierto. Pídele a un admin que abra uno con !sorteo.');
+        await sock.sendMessage(jid, { text: 'No hay ningún sorteo abierto. Pídele a un admin que abra uno con !sorteo.' });
         return;
       }
-      if (sorteo.participantes.includes(authorId)) {
-        await chat.sendMessage('Ya estás participando. ¡Suerte! 🍀');
+      if (sorteo.participantes.includes(senderId)) {
+        await sock.sendMessage(jid, { text: 'Ya estás participando. ¡Suerte! 🍀' });
         return;
       }
-      sorteo.participantes.push(authorId);
+      sorteo.participantes.push(senderId);
       saveSorteo();
-      await chat.sendMessage(`✅ @${authorId.split('@')[0]} ya está participando en el sorteo de *${sorteo.premio}*.`, {
-        mentions: [authorId]
+      await sock.sendMessage(jid, {
+        text: `✅ @${senderNumber} ya está participando en el sorteo de *${sorteo.premio}*.`,
+        mentions: [senderId]
       });
       return;
     }
 
     if (lower === '!cerrar') {
-      const admin = await isAdmin(chat, authorId);
+      const admin = await isAdmin(jid, senderId);
       if (!admin) {
-        await chat.sendMessage('Solo un admin puede cerrar el sorteo.');
+        await sock.sendMessage(jid, { text: 'Solo un admin puede cerrar el sorteo.' });
         return;
       }
       if (!sorteo.activo) {
-        await chat.sendMessage('No hay ningún sorteo abierto para cerrar.');
+        await sock.sendMessage(jid, { text: 'No hay ningún sorteo abierto para cerrar.' });
         return;
       }
       if (sorteo.participantes.length === 0) {
         sorteo = { activo: false, premio: '', participantes: [] };
         saveSorteo();
-        await chat.sendMessage('El sorteo se cerró sin participantes. Nadie ganó esta vez.');
+        await sock.sendMessage(jid, { text: 'El sorteo se cerró sin participantes. Nadie ganó esta vez.' });
         return;
       }
       const winner = sorteo.participantes[Math.floor(Math.random() * sorteo.participantes.length)];
@@ -379,17 +322,100 @@ client.on('message', async (msg) => {
       const total = sorteo.participantes.length;
       sorteo = { activo: false, premio: '', participantes: [] };
       saveSorteo();
-      await chat.sendMessage(
-        `🎉 ¡SORTEO CERRADO!\n\nPremio: *${premio}*\nParticipantes: ${total}\n\n🏆 El ganador es @${winner.split('@')[0]} ¡Felicidades! 🎊`,
-        { mentions: [winner] }
-      );
+      await sock.sendMessage(jid, {
+        text: `🎉 ¡SORTEO CERRADO!\n\nPremio: *${premio}*\nParticipantes: ${total}\n\n🏆 El ganador es @${normNum(winner)} ¡Felicidades! 🎊`,
+        mentions: [winner]
+      });
       console.log('Ganador del sorteo:', winner, 'Premio:', premio);
+      return;
+    }
+
+    if (lower.startsWith('!difundir')) {
+      const admin = await isAdmin(jid, senderId);
+      if (!admin) {
+        await sock.sendMessage(jid, { text: 'Solo un admin puede mandar una difusión.' });
+        return;
+      }
+      const text = body.slice('!difundir'.length).trim();
+      if (!text) {
+        await sock.sendMessage(jid, { text: 'Escribe el mensaje después de !difundir. Ej: !difundir Hola, esto es una prueba.' });
+        return;
+      }
+      const result = await sendMassive(text);
+      await sock.sendMessage(jid, { text: `📣 Difusión enviada a ${result.sent} de ${result.total} números permitidos.${result.failed.length ? ' Falló en: ' + result.failed.join(', ') : ''}` });
       return;
     }
   } catch (e) {
     console.error('Error procesando mensaje:', e.message);
   }
-});
+}
+
+// ---- Conectar a WhatsApp (Baileys) ----
+async function startBot() {
+  const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth'));
+  const { version } = await fetchLatestBaileysVersion();
+  sock = makeWASocket({
+    version,
+    auth: state,
+    printQRInTerminal: false,
+    browser: ['SIMsimd', 'Chrome', '1.0.0']
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) {
+      qrString = qr;
+      isReady = false;
+      console.log('Escanea este código QR con el WhatsApp del número bot:');
+      try {
+        console.log(await QRCode.toString(qr, { type: 'terminal', small: true }));
+      } catch (e) {
+        console.log('QR (texto):', qr);
+      }
+      console.log('O abre la página web del bot (/qr) en tu celular para verlo grande.');
+    }
+    if (connection === 'open') {
+      qrString = null;
+      isReady = true;
+      readyInfo = sock.user ? `${sock.user.name || ''} (${sock.user.id ? normNum(sock.user.id) : ''})` : '';
+      console.log('✅ SIMsimd listo y conectado.', readyInfo);
+      scheduleDailyMessage();
+    }
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('Conexión cerrada. ¿Reconectar?', shouldReconnect);
+      if (shouldReconnect) {
+        setTimeout(startBot, 5000);
+      } else {
+        console.log('Sesión cerrada (loggedOut). Borra la carpeta auth y vuelve a escanear el QR.');
+      }
+    }
+  });
+
+  // Mensajes entrantes
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      await handleMessage(msg);
+    }
+  });
+
+  // Bienvenida cuando alguien entra al grupo
+  sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
+    try {
+      if (action !== 'add') return;
+      if (config.groupId && id !== config.groupId) return;
+      const names = participants.map(p => `@${normNum(p)}`).join(', ');
+      const text = config.welcomeMessage.replace('{name}', names);
+      await sock.sendMessage(id, { text, mentions: participants });
+      console.log('Bienvenida enviada a:', names);
+    } catch (e) {
+      console.error('Error en bienvenida:', e.message);
+    }
+  });
+}
 
 // ---- Servidor web: QR para vincular desde el celular + configuración ----
 const app = express();
@@ -404,7 +430,7 @@ app.get('/', async (req, res) => {
   const status = isReady
     ? `✅ <b>Conectado</b> ${readyInfo ? 'como ' + readyInfo : ''}`
     : (qrString ? '⏳ Esperando que escanees el QR' : '🔄 Conectando…');
-  res.send(page('SIMsimd', `<h1>🤖 SIMsimd</h1><div class="card">${status}</div><p><a href="/qr">📷 Ver código QR para vincular</a></p><p><a href="/config">⚙️ Configuración</a></p><p><small>Bot de WhatsApp para tu grupo: bienvenida, moderación, sorteos y difusión a tus números.</small></p>`));
+  res.send(page('SIMsimd', `<h1>🤖 SIMsimd</h1><div class="card">${status}</div><p><a href="/qr">📷 Ver código QR para vincular</a></p><p><a href="/config">⚙️ Configuración</a></p><p><small>Bot de WhatsApp para tu grupo: bienvenida, moderación, sorteos y difusión a tus números. Corre en tu celular con Termux, gratis.</small></p>`));
 });
 
 app.get('/qr', async (req, res) => {
@@ -473,5 +499,5 @@ app.post('/config', (req, res) => {
 
 app.listen(PORT, () => console.log(`🌐 Panel web en http://localhost:${PORT} ( /qr para vincular, /config para ajustes )`));
 
-client.initialize();
-console.log('Iniciando bot… escanea el QR cuando aparezca.');
+startBot();
+console.log('Iniciando SIMsimd… escanea el QR cuando aparezca.');
